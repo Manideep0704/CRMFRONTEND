@@ -143,18 +143,36 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
   const hasBody = !['GET', 'HEAD'].includes(request.method);
   const body = hasBody ? await request.arrayBuffer() : undefined;
 
-  let backendResponse: Response;
-  try {
-    backendResponse = await fetch(targetUrl.toString(), {
-      method: request.method,
-      headers: forwardHeaders,
-      body,
-      redirect: 'manual',
-      cache: 'no-store',
-    });
-  } catch (err: any) {
+  let backendResponse: Response | null = null;
+  const candidateBases = [
+    BACKEND_BASE,
+    'http://62.72.29.27:8010',
+    'http://api:8010',
+    'http://crmbackend.iryax.com',
+    'http://127.0.0.1:8010',
+    'http://127.0.0.1:8000',
+  ].filter((b, idx, arr) => b && arr.indexOf(b) === idx);
+
+  let lastError: any = null;
+  for (const base of candidateBases) {
+    try {
+      const candidateUrl = new URL(`/api/${routeParts.join('/')}${request.nextUrl.search}`, base);
+      backendResponse = await fetch(candidateUrl.toString(), {
+        method: request.method,
+        headers: forwardHeaders,
+        body,
+        redirect: 'manual',
+        cache: 'no-store',
+      });
+      break;
+    } catch (err: any) {
+      lastError = err;
+    }
+  }
+
+  if (!backendResponse) {
     return NextResponse.json(
-      { detail: `Failed to connect to backend at ${BACKEND_BASE}: ${err.message}` },
+      { detail: `Failed to connect to backend at ${BACKEND_BASE}: ${lastError?.message || 'Connection refused'}` },
       { status: 502 }
     );
   }
