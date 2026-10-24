@@ -1,0 +1,13 @@
+services:
+  crmfrontend:
+    build:
+      context: .
+      args:
+        API_INTERNAL_URL: http://62.72.29.27:8010
+    container_name: crmfrontend
+    restart: unless-stopped
+    ports:
+      - "3081:3000"
+    environment:
+      - NODE_ENV=production
+      - API_INTERNAL_URL=${API_INTERNAL_URL:-http://62.72.29.27:8010}
