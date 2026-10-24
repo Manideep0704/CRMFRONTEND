@@ -146,8 +146,10 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
   let backendResponse: Response | null = null;
   const candidateBases = [
     BACKEND_BASE,
-    'http://62.72.29.27:8010',
     'http://api:8010',
+    'http://host.docker.internal:8010',
+    'http://172.17.0.1:8010',
+    'http://62.72.29.27:8010',
     'http://crmbackend.iryax.com',
     'http://127.0.0.1:8010',
     'http://127.0.0.1:8000',
