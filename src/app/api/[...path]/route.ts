@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
-const BACKEND_BASE = (process.env.API_INTERNAL_URL || 'https://crmbackend.iryax.com').replace(/\/+$/, '');
+const BACKEND_BASE = (
+  process.env.API_INTERNAL_URL && !process.env.API_INTERNAL_URL.includes('crmbackend.iryax.com')
+    ? process.env.API_INTERNAL_URL
+    : 'http://62.72.29.27:8010'
+).replace(/\/+$/, '');
 
 function getRoleOverrides(): Record<string, string> {
   try {
