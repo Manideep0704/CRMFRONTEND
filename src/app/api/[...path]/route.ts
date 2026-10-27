@@ -5,7 +5,7 @@ import path from 'path';
 const BACKEND_BASE = (
   process.env.API_INTERNAL_URL && !process.env.API_INTERNAL_URL.includes('crmbackend.iryax.com')
     ? process.env.API_INTERNAL_URL
-    : 'http://62.72.29.27:8010'
+    : 'http://127.0.0.1:8010'
 ).replace(/\/+$/, '');
 
 function getRoleOverrides(): Record<string, string> {
@@ -38,7 +38,6 @@ function saveRoleOverride(idOrEmail: string, role: string, email?: string) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const filePath = path.join(dir, 'member_role_overrides.json');
     const existing = getRoleOverrides();
-    // Admins must ALWAYS stay admin
     if (isKnownAdmin(idOrEmail) || (email && isKnownAdmin(email))) {
       role = 'admin';
     } else if (existing[idOrEmail] === 'admin' && role !== 'admin') {
@@ -127,7 +126,6 @@ function saveLeadOverride(leadId: string, updates: Record<string, any>) {
   }
 }
 
-
 async function proxy(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const { path: routeParts } = await params;
   const targetUrl = new URL(`/api/${routeParts.join('/')}${request.nextUrl.search}`, BACKEND_BASE);
@@ -135,14 +133,15 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
   const forwardHeaders = new Headers();
   request.headers.forEach((value, key) => {
     const k = key.toLowerCase();
-    // Strip origin, host, referer, and content-length so target fetch calculates length correctly
-    if (k !== 'origin' && k !== 'host' && k !== 'referer' && k !== 'content-length') {
+    if (k !== 'origin' && k !== 'host' && k !== 'referer' && k !== 'content-length' && k !== 'connection') {
       forwardHeaders.set(key, value);
     }
   });
 
-  // Ensure internal CSRF / Timely request header is set
   forwardHeaders.set('X-Timely-Request', '1');
+  
+  // 🔥 FIX: Connection close for Undici to prevent 502 Bad Gateway
+  forwardHeaders.set('connection', 'close');
 
   const hasBody = !['GET', 'HEAD'].includes(request.method);
   const body = hasBody ? await request.arrayBuffer() : undefined;
@@ -153,8 +152,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     'http://api:8010',
     'http://host.docker.internal:8010',
     'http://172.17.0.1:8010',
-    'http://62.72.29.27:8010',
-    'http://crmbackend.iryax.com',
     'http://127.0.0.1:8010',
     'http://127.0.0.1:8000',
   ].filter((b, idx, arr) => b && arr.indexOf(b) === idx);
@@ -186,7 +183,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
   const responseHeaders = new Headers();
   backendResponse.headers.forEach((value, key) => {
     const k = key.toLowerCase();
-    // Do NOT forward hop-by-hop headers or content-length/encoding which Next.js manages on decompressed streams
     if (
       k !== 'set-cookie' &&
       k !== 'content-length' &&
@@ -202,7 +198,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     const errorText = await backendResponse.clone().text();
     console.error(`[API Proxy Error] ${request.method} ${targetUrl.pathname}: ${backendResponse.status} - ${errorText}`);
 
-    // Self-healing for Agent Assignment / Stage updates: PATCH /api/v1/leads/:id (heals 422 assignee errors, 403, 500, etc.)
     if (targetUrl.pathname.includes('/leads/') && request.method === 'PATCH') {
       const parts = targetUrl.pathname.split('/');
       const leadId = parts[parts.length - 1];
@@ -235,7 +230,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
       );
     }
 
-    // Teammate role editing fallback / healing (when remote backend doesn't have PATCH /members/:id endpoint)
     if (targetUrl.pathname.includes('/members/') && request.method === 'PATCH') {
       console.warn('[API Proxy] Handling PATCH /members/:id via proxy role store.');
       try {
@@ -257,7 +251,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
       }
     }
 
-    // Auto-heal 403 writer permission errors for promoted agents / workspace members
     if (backendResponse.status === 403 && (errorText.includes('Editing requires an agent') || errorText.includes('Administrator role required') || errorText.includes('Administrator access required'))) {
       const adminCookie = getAdminSessionCookie();
       if (adminCookie) {
@@ -284,7 +277,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
         }
       }
 
-      // Self-healing for Lead Claiming: POST /api/v1/leads/:id/accept
       if (targetUrl.pathname.includes('/leads/') && targetUrl.pathname.endsWith('/accept') && request.method === 'POST') {
         const parts = targetUrl.pathname.split('/');
         const leadId = parts[parts.length - 2];
@@ -299,7 +291,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
         );
       }
 
-      // Self-healing for Activity Note addition: POST /api/v1/leads/:id/notes
       if (targetUrl.pathname.includes('/leads/') && targetUrl.pathname.endsWith('/notes') && request.method === 'POST') {
         const parts = targetUrl.pathname.split('/');
         const leadId = parts[parts.length - 2];
@@ -315,7 +306,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
         );
       }
 
-      // Self-healing for New Lead Creation: POST /api/v1/leads
       if (targetUrl.pathname.endsWith('/leads') && request.method === 'POST') {
         let bodyObj: any = {};
         if (body) {
@@ -337,7 +327,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
       }
     }
 
-    // Audit logs deletion fallback / healing (when remote backend doesn't have DELETE /audit-logs endpoint)
     if (targetUrl.pathname.includes('/audit-logs') && request.method === 'DELETE') {
       console.warn('[API Proxy] Handling DELETE /audit-logs via proxy store.');
       const parts = targetUrl.pathname.split('/');
@@ -350,10 +339,7 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
       return NextResponse.json({ ok: true }, { status: 200, headers: responseHeaders });
     }
 
-    // If remote backend encounters offset-naive vs offset-aware datetime comparison error
     if (backendResponse.status === 500 && errorText.includes("offset-naive and offset-aware datetimes")) {
-
-      // 1. Dashboard summary healing
       if (targetUrl.pathname.endsWith('/dashboard/summary')) {
         console.warn('[API Proxy] Intercepted 500 from /dashboard/summary. Synthesizing accurate summary from leads.');
         try {
@@ -432,7 +418,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
         }
       }
 
-      // 2. Follow-up creation self-healing
       if (targetUrl.pathname.endsWith('/follow-ups') && request.method === 'POST') {
         console.warn('[API Proxy] Intercepted 500 from POST /follow-ups (naive/aware comparison). Resolving open tasks and retrying...');
         try {
@@ -441,7 +426,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
             bodyObj = JSON.parse(new TextDecoder().decode(body));
           }
           if (bodyObj?.lead_id) {
-            // Fetch open follow-ups from remote backend
             const openRes = await fetch(new URL('/api/v1/follow-ups?status=open', BACKEND_BASE).toString(), {
               headers: forwardHeaders,
               cache: 'no-store'
@@ -457,7 +441,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
                   cache: 'no-store'
                 });
               }
-              // Retry POST /api/v1/follow-ups now that prior conflicting tasks are closed
               const retryRes = await fetch(targetUrl.toString(), {
                 method: 'POST',
                 headers: forwardHeaders,
@@ -479,7 +462,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
         }
       }
 
-      // 3. Follow-up update / PATCH healing
       if (targetUrl.pathname.includes('/follow-ups/') && request.method === 'PATCH') {
         console.warn('[API Proxy] Intercepted 500 from PATCH /follow-ups/:id. Returning 200 OK.');
         const parts = targetUrl.pathname.split('/');
@@ -489,7 +471,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     }
   }
 
-  // Record role override if remote PATCH /members/:id succeeded
   if (targetUrl.pathname.includes('/members/') && request.method === 'PATCH' && backendResponse.ok) {
     try {
       if (body) {
@@ -503,7 +484,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     } catch {}
   }
 
-  // Handle Set-Cookie headers properly, stripping 'Secure' flag and remote 'Domain' when testing locally over HTTP
   const isLocalhost = request.nextUrl.hostname === 'localhost' || request.nextUrl.hostname === '127.0.0.1';
   const rawSetCookies = backendResponse.headers.getSetCookie ? backendResponse.headers.getSetCookie() : [];
   const cookiesToForward: string[] = [];
@@ -531,13 +511,11 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
 
   const responseBody = await backendResponse.arrayBuffer();
 
-  // 1. Apply role overrides on POST /api/v1/auth/login
   if (targetUrl.pathname.endsWith('/auth/login') && request.method === 'POST' && backendResponse.ok) {
     try {
       const text = new TextDecoder().decode(responseBody);
       const data = JSON.parse(text);
       if (data && data.user) {
-        // If an admin logs in, store their active session for proxy writer elevation fallback
         if (data.role === 'admin') {
           for (const c of cookiesToForward) {
             if (c.includes('timely_session=')) {
@@ -576,7 +554,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     }
   }
 
-  // 2. Apply role overrides on GET /api/v1/organizations/me
   if (targetUrl.pathname.endsWith('/organizations/me') && request.method === 'GET' && backendResponse.ok) {
     try {
       const text = new TextDecoder().decode(responseBody);
@@ -611,7 +588,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     }
   }
 
-  // 3. Apply role overrides on GET /api/v1/members
   if (targetUrl.pathname.endsWith('/members') && request.method === 'GET' && backendResponse.ok) {
     const overrides = getRoleOverrides();
     if (Object.keys(overrides).length > 0) {
@@ -668,7 +644,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     }
   }
 
-  // Filter deleted audit logs on GET /api/v1/audit-logs
   if (targetUrl.pathname.endsWith('/audit-logs') && request.method === 'GET' && backendResponse.ok) {
     const deleted = getDeletedAuditLogs();
     if (deleted.all) {
@@ -704,7 +679,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     }
   }
 
-  // Save lead override on successful PATCH /api/v1/leads/:id and merge into response
   if (targetUrl.pathname.includes('/leads/') && request.method === 'PATCH' && backendResponse.ok) {
     const parts = targetUrl.pathname.split('/');
     const leadId = parts[parts.length - 1];
@@ -748,7 +722,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     }
   }
 
-  // Apply lead overrides on GET /api/v1/leads and GET /api/v1/leads/queue
   if ((targetUrl.pathname.endsWith('/leads') || targetUrl.pathname.endsWith('/leads/queue')) && request.method === 'GET' && backendResponse.ok) {
     const overrides = getLeadOverrides();
     const overrideKeys = Object.keys(overrides);
@@ -786,7 +759,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     }
   }
 
-  // Apply lead override on GET /api/v1/leads/:id
   const singleLeadMatch = targetUrl.pathname.match(/\/leads\/([^/?#]+)$/);
   if (singleLeadMatch && singleLeadMatch[1] !== 'queue' && singleLeadMatch[1] !== 'export' && request.method === 'GET' && backendResponse.ok) {
     const singleLeadId = singleLeadMatch[1];
@@ -814,7 +786,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     }
   }
 
-  // Update dashboard summary status counts with lead overrides
   if (targetUrl.pathname.endsWith('/dashboard/summary') && request.method === 'GET' && backendResponse.ok) {
     const overrides = getLeadOverrides();
     if (Object.keys(overrides).length > 0) {
@@ -868,7 +839,6 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
   for (const cookie of cookiesToForward) {
     nextRes.headers.append('set-cookie', cookie);
   }
-
 
   return nextRes;
 }
