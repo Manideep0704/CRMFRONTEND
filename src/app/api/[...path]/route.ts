@@ -14,7 +14,7 @@ function getRoleOverrides(): Record<string, string> {
     if (fs.existsSync(filePath)) {
       return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     }
-  } catch {}
+  } catch { }
   return {};
 }
 
@@ -57,7 +57,7 @@ function getAdminSessionCookie(): string | null {
     if (fs.existsSync(filePath)) {
       return fs.readFileSync(filePath, 'utf-8').trim() || null;
     }
-  } catch {}
+  } catch { }
   return null;
 }
 
@@ -78,7 +78,7 @@ function getDeletedAuditLogs(): { all?: boolean; ids: string[] } {
     if (fs.existsSync(filePath)) {
       return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     }
-  } catch {}
+  } catch { }
   return { ids: [] };
 }
 
@@ -105,7 +105,7 @@ function getLeadOverrides(): Record<string, any> {
     if (fs.existsSync(filePath)) {
       return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     }
-  } catch {}
+  } catch { }
   return {};
 }
 
@@ -139,7 +139,7 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
   });
 
   forwardHeaders.set('X-Timely-Request', '1');
-  
+
   // 🔥 FIX: Connection close for Undici to prevent 502 Bad Gateway
   forwardHeaders.set('connection', 'close');
 
@@ -205,7 +205,7 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
       if (body) {
         try {
           bodyObj = JSON.parse(new TextDecoder().decode(body));
-        } catch {}
+        } catch { }
       }
       if (bodyObj.assigned_to) {
         bodyObj.accepted_by = bodyObj.assigned_to;
@@ -298,7 +298,7 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
         if (body) {
           try {
             bodyObj = JSON.parse(new TextDecoder().decode(body));
-          } catch {}
+          } catch { }
         }
         return NextResponse.json(
           { id: 'note-' + Date.now(), type: 'note', description: bodyObj.description || '', created_at: new Date().toISOString() },
@@ -311,7 +311,7 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
         if (body) {
           try {
             bodyObj = JSON.parse(new TextDecoder().decode(body));
-          } catch {}
+          } catch { }
         }
         const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : ('lead-' + Date.now());
         const newLead = {
@@ -481,13 +481,13 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
           saveRoleOverride(memberId, bodyObj.role, bodyObj?.email);
         }
       }
-    } catch {}
+    } catch { }
   }
 
   const isLocalhost = request.nextUrl.hostname === 'localhost' || request.nextUrl.hostname === '127.0.0.1';
   const rawSetCookies = backendResponse.headers.getSetCookie ? backendResponse.headers.getSetCookie() : [];
   const cookiesToForward: string[] = [];
-  
+
   if (rawSetCookies.length > 0) {
     for (const cookie of rawSetCookies) {
       let finalCookie = cookie;
@@ -625,7 +625,7 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
             try {
               const filePath = path.join(process.cwd(), '.next', 'member_role_overrides.json');
               fs.writeFileSync(filePath, JSON.stringify(overrides, null, 2), 'utf-8');
-            } catch {}
+            } catch { }
           }
           const modifiedJson = JSON.stringify(membersList);
           const patchedRes = new NextResponse(modifiedJson, {
@@ -687,7 +687,7 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
       if (body) {
         try {
           bodyObj = JSON.parse(new TextDecoder().decode(body));
-        } catch {}
+        } catch { }
       }
       if (bodyObj.assigned_to) {
         bodyObj.accepted_by = bodyObj.assigned_to;
@@ -718,7 +718,7 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
           }
           return patchedRes;
         }
-      } catch {}
+      } catch { }
     }
   }
 
@@ -812,7 +812,7 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
                 summary.conversion_rate = Math.round((statusCounts['converted'] / summary.total) * 1000) / 10;
               }
             }
-          } catch {}
+          } catch { }
           const modifiedJson = JSON.stringify(summary);
           const patchedRes = new NextResponse(modifiedJson, {
             status: backendResponse.status,
